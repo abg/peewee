@@ -1904,9 +1904,18 @@ class QueryCompiler(object):
 
     def generate_delete(self, query):
         model = query.model_class
+        db = model._meta.database
         clauses = [SQL('DELETE FROM'), model.as_entity()]
         if query._where:
             clauses.extend([SQL('WHERE'), query._where])
+
+        if query._order_by:
+            clauses.extend([SQL('ORDER BY'), CommaClause(*query._order_by)])
+
+        if query._limit is not None or (query._offset and db.limit_max):
+            limit = query._limit if query._limit is not None else db.limit_max
+            clauses.append(SQL('LIMIT %s' % limit))
+
         if query._returning is not None:
             returning_clause = Clause(*query._returning)
             returning_clause.glue = ', '
@@ -3035,6 +3044,9 @@ class _WriteQuery(Query):
 
     def _clone_attributes(self, query):
         query = super(_WriteQuery, self)._clone_attributes(query)
+        query._limit = self._limit
+        query._offset = self._offset
+        query._order_by = self._order_by
         if self._returning:
             query._returning = list(self._returning)
             query._tuples = self._tuples
@@ -3259,6 +3271,24 @@ class InsertQuery(_WriteQuery):
 
 class DeleteQuery(_WriteQuery):
     join = not_allowed('joining')
+
+    def __init__(self, model_class):
+        super(DeleteQuery, self).__init__(model_class)
+        self._limit = None
+        self._offset = None
+        self._order_by = None
+
+    @returns_clone
+    def order_by(self, *args):
+        self._order_by = list(args)
+
+    @returns_clone
+    def limit(self, lim):
+        self._limit = lim
+
+    @returns_clone
+    def offset(self, off):
+        self._offset = off
 
     def sql(self):
         return self.compiler().generate_delete(self)
